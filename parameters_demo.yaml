@@ -5,7 +5,7 @@ run_name                  : "demo"
 # Model parameters
 g_dim                     : 200
 u_dim                     : 1
-factors_dim               : 20
+factors_dim               : 2
 g0_encoder_dim            : 200
 c_encoder_dim             : 128
 controller_dim            : 128

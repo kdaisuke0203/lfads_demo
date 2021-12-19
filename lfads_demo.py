@@ -14,7 +14,21 @@ from utils import batchify_random_sample, update_param_dict
 
 import pdb
 
+#-------------------------
+# COST FUNCTION COMPONENTS
+#-------------------------
 def KLCostGaussian(post_mu, post_lv, prior_mu, prior_lv):
+    '''
+    KLCostGaussian(post_mu, post_lv, prior_mu, prior_lv)
+
+    KL-Divergence between a prior and posterior diagonal Gaussian distribution.
+
+    Arguments:
+        - post_mu (torch.Tensor): mean for the posterior
+        - post_lv (torch.Tensor): logvariance for the posterior
+        - prior_mu (torch.Tensor): mean for the prior
+        - prior_lv (torch.Tensor): logvariance for the prior
+    '''
     klc = 0.5 * (prior_lv - post_lv + torch.exp(post_lv - prior_lv) \
          + ((post_mu - prior_mu)/torch.exp(0.5 * prior_lv)).pow(2) - 1.0).sum()
     return klc
@@ -22,8 +36,11 @@ def KLCostGaussian(post_mu, post_lv, prior_mu, prior_lv):
 
 def logLikelihoodPoisson(k, lam):
     '''
+    logLikelihoodPoisson(k, lam)
+
     Log-likelihood of Poisson distributed counts k given intensity lam.
-    
+
+    Arguments:
         - k (torch.Tensor): Tensor of size batch-size x time-step x input dimensions
         - lam (torch.Tensor): Tensor of size batch-size x time-step x input dimensions
     '''
@@ -32,27 +49,40 @@ def logLikelihoodPoisson(k, lam):
 
 def logLikelihoodGaussian(x, mu, logvar):
     '''
+    logLikelihoodGaussian(x, mu, logvar):
     
     Log-likeihood of a real-valued observation given a Gaussian distribution with mean 'mu' 
     and standard deviation 'exp(0.5*logvar)'
-
+    
+    Arguments:
         - x (torch.Tensor): Tensor of size batch-size x time-step x input dimensions
         - mu (torch.Tensor): Tensor of size batch-size x time-step x input dimensions
         - logvar (torch.tensor or torch.Tensor): tensor scalar or Tensor of size batch-size x time-step x input dimensions
     '''
     from math import log,pi
     return -0.5*(log(2*pi) + logvar + ((x - mu).pow(2)/torch.exp(logvar))).sum()
-    
+        
+#--------
+# NETWORK
+#--------
 
 class LFADS_Net(nn.Module):
     
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     def __init__(self, inputs_dim, T, dt,
                  model_hyperparams=None,
                  device = 'cpu', save_variables=False,
                  seed=None):
         '''
         LFADS_Net (Latent Factor Analysis via Dynamical Systems) neural network class.
+        
+        __init__(self, inputs_dim, T, dt,
+                 model_hyperparams=None,
+                 device='cpu', save_variables=False)
                  
+            required arguments:
+            
             - inputs_dim (int): the dimensionality of the data (e.g. number of cells)
             - T (int): number of time-steps in one sequence (i.e. one data point)
             - dt (float): time-step in seconds
@@ -98,6 +128,10 @@ class LFADS_Net(nn.Module):
             - device (String): device to use (default= 'cpu')
             - save_variables (bool) : whether to save dynamic variables (default= False)
         '''
+        
+        # -----------------------
+        # BASIC INIT STUFF
+        # -----------------------
         
         # call the nn.Modules constructor
         super(LFADS_Net, self).__init__()
@@ -276,13 +310,23 @@ class LFADS_Net(nn.Module):
         self.g0_prior_logkappa = nn.parameter.Parameter(torch.tensor(log(self.g0_prior_kappa)))
         self.u_prior_logkappa  = nn.parameter.Parameter(torch.tensor(log(self.u_prior_kappa)))
     
+        # --------------------------
+        # OPTIMIZER INIT
+        # --------------------------
         self.optimizer = opt.Adam(self.parameters(), lr=self.learning_rate, eps=self.epsilon, betas=self.betas)
+        
+        # --------------------------
+        # LOG-LIKELIHOOD FUNCTION
+        # --------------------------
         
         self.logLikelihood = logLikelihoodPoisson
         
-        
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     def initialize(self, batch_size=None):
         '''
+        initialize()
+        
         Initialize dynamic model variables. These need to be reinitialized with each forward pass to
         ensure we don't need to retain graph between each .backward() call. 
         
@@ -322,6 +366,11 @@ class LFADS_Net(nn.Module):
 
     def encode(self, x):
         '''
+        encode(x)
+        
+        Function to encode the data with the forward and backward encoders.
+        
+        Arguments:
           - x (torch.Tensor): Variable tensor of size batch size x time-steps x input dimension
         '''
         
@@ -329,6 +378,8 @@ class LFADS_Net(nn.Module):
         if self.keep_prob < 1.0:
             x = self.dropout(x)
         
+        # Encode data into forward and backward generator encoders to produce E_gen
+        # for generator initial conditions.
         for t in range(1, self.T+1):
             
             # generator encoders
@@ -351,7 +402,7 @@ class LFADS_Net(nn.Module):
         self.g0_logvar = torch.clamp(self.fc_g0logvar(egen), min=np.log(0.0001))
         self.g         = Variable(torch.randn(self.batch_size, self.g_dim).to(self.device))*torch.exp(0.5*self.g0_logvar)\
                          + self.g0_mean
-        
+        print("GG",self.g.shape)
         # KL cost for g(0)
 #         pdb.set_trace()
         self.kl_loss   = KLCostGaussian(self.g0_mean, self.g0_logvar,
@@ -363,6 +414,8 @@ class LFADS_Net(nn.Module):
     #------------------------------------------------------------------------------
     def generate(self, x):
         '''
+        generate()
+        
         Generates the rates using the controller encoder outputs and the sampled initial conditions for
         generator.
         '''
@@ -390,6 +443,8 @@ class LFADS_Net(nn.Module):
             self.u = Variable(torch.randn(self.batch_size, self.u_dim).to(self.device))*torch.exp(0.5*self.u_logvar) \
                         + self.u_mean
 
+            # KL cost for u(t)
+
             self.kl_loss = self.kl_loss + KLCostGaussian(self.u_mean, self.u_logvar,
                                         self.u_prior_mean, self.u_prior_logvar)/x.shape[0]
 
@@ -402,22 +457,30 @@ class LFADS_Net(nn.Module):
             
             # Generate factors from generator state
             self.f = self.fc_factors(self.g)
-            #print(self.f)
+            print("FFF",self.f.shape)
             # Generate rates from factor state
             self.r = torch.exp(self.fc_logrates(self.f))
             
+            # Reconstruction loss
             self.recon_loss = self.recon_loss - self.logLikelihood(x[:, t-1], self.r * self.dt)/x.shape[0]
-                  
+                
+            
             if self.save_variables:
                 self.factors[:, t] = self.f.detach().cpu()
-                #print("WWWWWW",self.factors)
                 self.inputs[:, t] = self.u.detach().cpu()
                 self.inputs_mean[:, t] = self.u_mean.detach().cpu()
                 self.inputs_logvar[:, t] = self.u_logvar.detach().cpu()
                 self.rates[:, t]   = self.r.detach().cpu()
                         
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     def forward(self, x):
         '''
+        forward(x)
+        
+        Runs a forward pass through the network.
+        
+        Arguments:
           - x (torch.Tensor): Single-trial spike data. Tensor of size batch size x time-steps x input dimension
         '''
         batch_size, steps_dim, inputs_dim = x.shape
@@ -430,28 +493,12 @@ class LFADS_Net(nn.Module):
         self.encode(x)
         self.generate(x)
         
-    def infer_trj(self, x):
-        pred_data = self.reconstruct(x)
-        #self.encode(x)
-        infer_trj = []
-        for t in range(self.T):
-            econ_and_fac = torch.cat((self.efcon[:, t+1].clone(), self.ebcon[:,t].clone(), self.f), dim = 1)
-            self.c = torch.clamp(self.gru_controller(econ_and_fac, self.c), min=0.0, max=self.clip_val)
-
-            self.u_mean   = self.fc_umean(self.c)
-            self.u_logvar = self.fc_ulogvar(self.c)
-
-            self.u = Variable(torch.randn(self.batch_size, self.u_dim).to(self.device))*torch.exp(0.5*self.u_logvar) \
-                        + self.u_mean
-
-            self.g = torch.clamp(self.gru_generator(self.u,self.g), min=0.0, max=self.clip_val)
-
-            self.f = self.fc_factors(self.g)
-            infer_trj.append(self.f)
-        return infer_trj
-    
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     def reconstruct(self, x):
         '''
+        reconstruct(x)
+        
         Runs a forward pass through the network, and outputs reconstruction of data x. History is not tracked.
         
         Arguments:
@@ -470,10 +517,14 @@ class LFADS_Net(nn.Module):
         self.save_variables = prev_save # reset to previous value
         
         return self.rates.mean(dim=0).cpu().numpy()
-     
+        
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def infer_factors(self, x):
         '''
+        infer_factors(x)
+        
         Runs a forward pass through the network, and outputs latent factors. History is not tracked.
         
         Arguments:
@@ -490,10 +541,12 @@ class LFADS_Net(nn.Module):
             self(x)
         
         self.save_variables = prev_save # reset to previous value
-        print(self.factors.shape)
+        
         return self.factors.detach().cpu()
 
-    
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
+
     def weight_schedule_fn(self, step):
         '''
         weight_schedule_fn(step)
@@ -514,6 +567,8 @@ class LFADS_Net(nn.Module):
             # Calculate schedule weight
             self.cost_weights[cost_key]['weight'] = min(weight_step/ self.cost_weights[cost_key]['schedule_dur'], 1.0)
     
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def apply_decay(self, current_loss):
         '''
@@ -533,6 +588,8 @@ class LFADS_Net(nn.Module):
                         g['lr'] = self.learning_rate
                     print('Learning rate decreased to %.8f'%self.learning_rate)
             
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def test(self, l2_loss, dl=None, dataset=None, batch_size=4):
         self.eval()
@@ -566,11 +623,21 @@ class LFADS_Net(nn.Module):
         test_kl_loss /= (i+1)
         return test_loss, test_recon_loss, test_kl_loss, 
     
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
+    
     def fit(self, train_dataset, valid_dataset,
             batch_size=4, max_epochs=100,
-            use_tensorboard=False, health_check=False,
+            use_tensorboard=True, health_check=False,
             train_truth=None, valid_truth=None, output='.'):
         '''
+        fit(self, train_dataset, valid_dataset, train_params=None, train_truth=None, valid_truth=None)        
+        Fits the LFADS_Net using ADAM optimization.
+        
+        required arguments:
+            - train_dataset (torch.utils.data.TensorDataset): Dataset with the training data to fit LFADS model
+            - valid_dataset (torch.utils.data.TensorDataset): Dataset with validation data to validate LFADS model
+        
         optional arguments:
             - batch_size (int) : number of data points in batch (default = 4)
             - max_epochs (int) : number of epochs to run in loop (default = 100)
@@ -579,13 +646,15 @@ class LFADS_Net(nn.Module):
             - train_truth (torch.Tensor) : ground-truth rates for training dataset
             - valid_truth (torch.Tensor) : ground-truth rates for validation dataset
         '''
+        # Set Training Loop parameters
         self.batch_size = batch_size
-        
+
+        # create the dataloader
         train_dl = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         valid_dl = torch.utils.data.DataLoader(valid_dataset, batch_size=self.batch_size)
         
         # Initialize directory to save checkpoints
-        save_loc = '%s/models/%s/%s/checkpoints/'%(output, self.dataset_name, self.run_name)
+        save_loc = '%s/models_demo/%s/%s/checkpoints_demo/'%(output, self.dataset_name, self.run_name)
 
         # Create model_checkpoint directory if it doesn't exist
         if not os.path.isdir(save_loc):
@@ -596,7 +665,7 @@ class LFADS_Net(nn.Module):
             
         # Initialize tensorboard
         if use_tensorboard:
-            tb_folder = '%s/models/%s/%s/tensorboard/'%(output, self.dataset_name, self.run_name)
+            tb_folder = '%s/models_demo/%s/%s/tensorboard_demo/'%(output, self.dataset_name, self.run_name)
             if not os.path.exists(tb_folder):
                 os.mkdir(tb_folder)
             elif os.path.exists(tb_folder) and self.epochs==0:
@@ -606,12 +675,16 @@ class LFADS_Net(nn.Module):
             from tensorboardX import SummaryWriter
             writer = SummaryWriter(tb_folder)
             
+        # print a message
         print('Beginning training...')
+        # for each epoch...
         for epoch in range(max_epochs):
             self.train()
+            # If minimum learning rate reached, break training loop
             if self.learning_rate <= self.learning_rate_min:
                 break
             
+            # cumulative training loss for this epoch
             train_loss = 0
             train_recon_loss = 0
             train_kl_loss = 0
@@ -644,6 +717,7 @@ class LFADS_Net(nn.Module):
                 # Check if loss is nan
                 assert not torch.isnan(loss.data), 'Loss is NaN'
                                 
+                # Backward
                 loss.backward()
                 
                 # clip gradient norm
@@ -658,6 +732,8 @@ class LFADS_Net(nn.Module):
                 if use_tensorboard:
                     self.health_check(writer)
                 
+                
+                # Add batch loss to epoch running loss
                 train_loss += loss.data
                 train_recon_loss += self.recon_loss.data
                 train_kl_loss += self.kl_loss.data            
@@ -668,6 +744,7 @@ class LFADS_Net(nn.Module):
             
             valid_loss, valid_recon_loss, valid_kl_loss = self.test(l2_loss, dl=valid_dl)
         
+            # Print Epoch Loss
             print('Epoch: %4d, Step: %5d, training loss: %.3f, validation loss: %.3f' %(self.epochs+1, self.current_step, train_loss, valid_loss))
             
             # Apply learning rate decay function
@@ -740,12 +817,17 @@ class LFADS_Net(nn.Module):
         
         import pandas as pd
         df = pd.DataFrame(self.full_loss_store)
-        df.to_csv('%s/models/%s/%s/loss.csv'%(output, self.dataset_name, self.run_name), index_label='epoch')
+        df.to_csv('%s/models_demo/%s/%s/loss.csv'%(output, self.dataset_name, self.run_name), index_label='epoch')
         
+        # Save a final checkpoint
         self.save_checkpoint(force=True, output=output)
         
+        # Print message
         print('...training complete.')
     
+        
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def plot_traces(self, pred, true,figsize=(8,8), num_traces=12, ncols=2, mode=None, norm=True, pred_logvar=None):
         '''
@@ -834,8 +916,10 @@ class LFADS_Net(nn.Module):
         fig.subplots_adjust(wspace=0.1, hspace=0.1)        
         return fig
     
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------ 
     
-    def plot_factors(self, max_in_col=2, figsize=(8,8)):
+    def plot_factors(self, max_in_col=5, figsize=(8,8)):
         
         nrows = max_in_col
         ncols = int(np.ceil(self.factors_dim/max_in_col))
@@ -845,7 +929,6 @@ class LFADS_Net(nn.Module):
         axs = np.ravel(axs)
         time = np.arange(0, self.T*self.dt, self.dt)
         factors = self.factors.mean(dim=0).cpu().numpy()
-        print("FF",self.factors.shape)
         fmin = factors.min()
         fmax = factors.max()
         
@@ -869,8 +952,10 @@ class LFADS_Net(nn.Module):
         fig.suptitle('Factors 1-%i for a sampled trial.'%factors.shape[1])
         fig.subplots_adjust(wspace=0.1, hspace=0.1)
         
-        return fig
-   
+        return fig,self.factors
+    
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def plot_inputs(self, fig_width=8, fig_height=1.5):
     
@@ -888,6 +973,8 @@ class LFADS_Net(nn.Module):
             plt.xlabel('time (s)')
         return fig
 
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def plot_rsquared(self, pred, true, figsize=(6, 4)):
         fig = plt.figure(figsize=figsize)
@@ -904,9 +991,13 @@ class LFADS_Net(nn.Module):
         return fig
     
     
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
+    
     def plot_summary(self, data, truth=None, num_average=100):
         
         plt.close()
+        
         figs_dict = {}
         
         batch_example, ix = batchify_random_sample(data, num_average)
@@ -917,19 +1008,21 @@ class LFADS_Net(nn.Module):
         figs_dict['traces'].suptitle('Spiking Data vs.Inferred Rate')
         figs_dict['traces'].legend(['Inferred Rates', 'Spikes'])
         
-        """if torch.is_tensor(truth):
+        if torch.is_tensor(truth):
             pred_rate = self.rates.mean(dim=0).cpu().numpy()
             true_rate = truth[ix].cpu().numpy()
             figs_dict['truth'] = self.plot_traces(pred_rate, true_rate, mode='rand')
             figs_dict['truth'].suptitle('Inferred vs. Ground-truth rate functions')
             figs_dict['truth'].legend(['Inferred', 'Ground-truth'])
-            figs_dict['rsq']   = self.plot_rsquared(pred_rate, true_rate)"""
+            figs_dict['rsq']   = self.plot_rsquared(pred_rate, true_rate)
             
         figs_dict['factors'] = self.plot_factors()
-        #figs_dict['inputs']  = self.plot_inputs()
+        figs_dict['inputs']  = self.plot_inputs()
         
         return figs_dict
 
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def save_checkpoint(self, force=False, purge_limit=50, output='.'):
         '''
@@ -946,7 +1039,7 @@ class LFADS_Net(nn.Module):
         #  - epoch       (int)
         #  - loss        (float with decimal point replaced by -)
         
-        save_loc = '%s/models/%s/%s/checkpoints/'%(output, self.dataset_name, self.run_name)
+        save_loc = '%s/models_demo/%s/%s/checkpoints_demo/'%(output, self.dataset_name, self.run_name)
 
         if force:
             pass
@@ -993,6 +1086,8 @@ class LFADS_Net(nn.Module):
         torch.save({'net' : self.state_dict(), 'opt' : self.optimizer.state_dict(), 'train' : train_dict},
                    save_loc+output_filename)
 
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def load_checkpoint(self, input_filename='best', output='.'):
         '''
@@ -1007,7 +1102,7 @@ class LFADS_Net(nn.Module):
             
             - dataset_name : if input_filename is not a path, must not be None
         '''
-        save_loc = '%s/models/%s/%s/checkpoints/'%(output, self.dataset_name, self.run_name)
+        save_loc = '%s/models_demo/%s/%s/checkpoints_demo/'%(output, self.dataset_name, self.run_name)
         
         # If input_filename is not a filename, get checkpoint with specified quality (best, recent, longest)
         if not os.path.exists(input_filename):
@@ -1075,6 +1170,8 @@ class LFADS_Net(nn.Module):
         self.cost_weights          = state['train']['cost_weights']
         self.dataset_name          = state['train']['dataset_name']
         
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def health_check(self, writer):
         '''
@@ -1121,11 +1218,15 @@ class LFADS_Net(nn.Module):
         writer.add_scalar('5_Activity_norms/2_ebgen', self.ebcon.data.norm(), self.current_step)
         return
         
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def _set_params(self, params):
         for k in params.keys():
             self.__setattr__(k, params[k])
 
+    #------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
     
     def _update_params(self, prev_params, new_params):
         if new_params:
