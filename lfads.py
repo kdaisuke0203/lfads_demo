@@ -490,7 +490,6 @@ class LFADS_Net(nn.Module):
             self(x)
         
         self.save_variables = prev_save # reset to previous value
-        print(self.factors.shape)
         return self.factors.detach().cpu()
 
     
@@ -607,6 +606,7 @@ class LFADS_Net(nn.Module):
             writer = SummaryWriter(tb_folder)
             
         print('Beginning training...')
+        loss_his = []
         for epoch in range(max_epochs):
             self.train()
             if self.learning_rate <= self.learning_rate_min:
@@ -665,10 +665,10 @@ class LFADS_Net(nn.Module):
             train_loss /= (i+1)
             train_recon_loss /= (i+1)
             train_kl_loss /= (i+1)
-            
-            valid_loss, valid_recon_loss, valid_kl_loss = self.test(l2_loss, dl=valid_dl)
+            loss_his.append(train_loss)
+            #valid_loss, valid_recon_loss, valid_kl_loss = self.test(l2_loss, dl=valid_dl)
         
-            print('Epoch: %4d, Step: %5d, training loss: %.3f, validation loss: %.3f' %(self.epochs+1, self.current_step, train_loss, valid_loss))
+            print('Epoch: %4d, Step: %5d, training loss: %.3f' %(self.epochs+1, self.current_step, train_loss))
             
             # Apply learning rate decay function
             if self.scheduler_on:
@@ -676,14 +676,14 @@ class LFADS_Net(nn.Module):
                 
             # Store loss
             self.train_loss_store.append(float(train_loss))
-            self.valid_loss_store.append(float(valid_loss))
+            #self.valid_loss_store.append(float(valid_loss))
             
             self.full_loss_store['train_loss'][self.epochs]       = float(train_loss)
             self.full_loss_store['train_recon_loss'][self.epochs] = float(train_recon_loss)
             self.full_loss_store['train_kl_loss'][self.epochs]    = float(train_kl_loss)
-            self.full_loss_store['valid_loss'][self.epochs]       = float(valid_loss)
-            self.full_loss_store['valid_recon_loss'][self.epochs] = float(valid_recon_loss)
-            self.full_loss_store['valid_kl_loss'][self.epochs]    = float(valid_kl_loss)
+            #self.full_loss_store['valid_loss'][self.epochs]       = float(valid_loss)
+            #self.full_loss_store['valid_recon_loss'][self.epochs] = float(valid_recon_loss)
+           # self.full_loss_store['valid_kl_loss'][self.epochs]    = float(valid_kl_loss)
             self.full_loss_store['l2_loss'][self.epochs]          = float(l2_loss.data)
             
             # Write results to tensorboard
@@ -742,8 +742,8 @@ class LFADS_Net(nn.Module):
         df = pd.DataFrame(self.full_loss_store)
         df.to_csv('%s/models/%s/%s/loss.csv'%(output, self.dataset_name, self.run_name), index_label='epoch')
         
-        self.save_checkpoint(force=True, output=output)
-        
+        #self.save_checkpoint(force=True, output=output)
+        plt.plot(loss_his)
         print('...training complete.')
     
     

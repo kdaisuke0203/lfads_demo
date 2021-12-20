@@ -3,10 +3,10 @@ dataset_name              : "chaotic_rnn"
 run_name                  : "demo"
   
 # Model parameters
-g_dim                     : 200
+g_dim                     : 50
 u_dim                     : 1
 factors_dim               : 2
-g0_encoder_dim            : 200
+g0_encoder_dim            : 50
 c_encoder_dim             : 128
 controller_dim            : 128
 g0_prior_kappa            : 0.1
