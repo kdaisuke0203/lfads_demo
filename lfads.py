@@ -231,7 +231,11 @@ class LFADS_Net(nn.Module):
         self.fc_factors = nn.Linear(in_features= self.g_dim, out_features= self.factors_dim)
         
         # logrates from factors
-        self.fc_logrates   = nn.Linear(in_features= self.factors_dim, out_features= self.inputs_dim)
+        #self.fc_logrates   = nn.Linear(in_features= self.factors_dim, out_features= self.inputs_dim)
+        self.fc_logrates = nn.Sequential(nn.Linear(self.factors_dim,200),nn.ReLU(),
+                                          nn.Dropout(0.2),
+                                  nn.Linear(200,200),nn.ReLU(),
+                                  nn.Linear(200,self.inputs_dim))
         
         # -----------
         # Dropout layer
